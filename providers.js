@@ -42,12 +42,6 @@ export async function getProviderAQuote(normalizedRequest) {
   const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
   const apiKey = process.env.PROVIDER_A_API_KEY;
 
-  const urlError = validateUrl("PROVIDER_A_URL", url);
-  if (urlError) {
-    return { provider: "ProviderA", error: true, errorMessage: urlError };
-  }
-
-  try {
     // Map normalized payload to Provider A shape
     const payload = {
       faceAmount: normalizedRequest.faceAmount,
@@ -104,12 +98,6 @@ export async function getProviderBQuote(normalizedRequest) {
   const url = process.env.PROVIDER_B_URL;
   const apiKey = process.env.PROVIDER_B_API_KEY;
 
-  const urlError = validateUrl("PROVIDER_B_URL", url);
-  if (urlError) {
-    return { provider: "ProviderB", error: true, errorMessage: urlError };
-  }
-
-  try {
     // Map normalized payload to Provider B shape
     const payload = {
       amount: normalizedRequest.faceAmount,
@@ -212,23 +200,14 @@ export function getProvidersStatus() {
     {
       provider: "ProviderA",
       enabled: process.env.PROVIDER_A_ENABLED === "true",
-      configIssue:
-        process.env.PROVIDER_A_ENABLED === "true"
-          ? validateUrl("PROVIDER_A_URL", process.env.PROVIDER_A_URL)
-          : null,
     },
     {
       provider: "ProviderB",
       enabled: process.env.PROVIDER_B_ENABLED === "true",
-      configIssue:
-        process.env.PROVIDER_B_ENABLED === "true"
-          ? validateUrl("PROVIDER_B_URL", process.env.PROVIDER_B_URL)
-          : null,
     },
     {
       provider: "MockCarrier",
-      enabled: process.env.MOCK_PROVIDER_ENABLED !== "false",
-      configIssue: null,
+      enabled: true,
     },
   ];
 }
