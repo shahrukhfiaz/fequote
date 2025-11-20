@@ -23,7 +23,8 @@ async function initBrowser() {
   }
 
   console.log("🚀 Launching persistent browser instance...");
-  browserInstance = await puppeteer.launch({
+  
+  const launchOptions = {
     headless: "new", // Headless mode for production (set to false for debugging)
     args: [
       "--no-sandbox",
@@ -33,7 +34,9 @@ async function initBrowser() {
       "--disable-features=IsolateOrigins,site-per-process",
       "--disable-blink-features=AutomationControlled",
     ],
-  });
+  };
+
+  browserInstance = await puppeteer.launch(launchOptions);
 
   // Keep a persistent page open
   const pages = await browserInstance.pages();
