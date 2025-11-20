@@ -1,6 +1,7 @@
 // providers.js
 import axios from "axios";
 import dotenv from "dotenv";
+import { getInsuranceToolkitsQuote, getSessionStatus } from "./insuranceToolkitsScraper.js";
 
 dotenv.config();
 
@@ -177,6 +178,7 @@ export async function getAllQuotes(normalizedRequest) {
   const providersToCall = [
     getProviderAQuote(normalizedRequest),
     getProviderBQuote(normalizedRequest),
+    getInsuranceToolkitsQuote(normalizedRequest),
   ];
 
   // Allow disabling the mock provider in production via env flag
@@ -186,7 +188,19 @@ export async function getAllQuotes(normalizedRequest) {
 
   const results = await Promise.all(providersToCall);
 
-  const quotes = results.filter((q) => q !== null);
+  // Flatten results (Insurance Toolkits returns an array of quotes)
+  const quotes = results.reduce((acc, result) => {
+    if (result === null) return acc;
+    
+    // If it's an array (multiple quotes from one provider), spread them
+    if (Array.isArray(result)) {
+      acc.push(...result);
+    } else {
+      acc.push(result);
+    }
+    
+    return acc;
+  }, []);
 
   const sortedQuotes = quotes.sort((a, b) => {
     if (a.error || b.error) return 0;
@@ -198,6 +212,10 @@ export async function getAllQuotes(normalizedRequest) {
 }
 
 export function getProvidersStatus() {
+  const itkSession = process.env.INSURANCE_TOOLKITS_ENABLED === "true" 
+    ? getSessionStatus() 
+    : null;
+
   return [
     {
       provider: "ProviderA",
@@ -208,8 +226,13 @@ export function getProvidersStatus() {
       enabled: process.env.PROVIDER_B_ENABLED === "true",
     },
     {
+      provider: "InsuranceToolkits",
+      enabled: process.env.INSURANCE_TOOLKITS_ENABLED === "true",
+      session: itkSession,
+    },
+    {
       provider: "MockCarrier",
-      enabled: true,
+      enabled: process.env.MOCK_PROVIDER_ENABLED !== "false",
     },
   ];
 }
