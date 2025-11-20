@@ -1,0 +1,17 @@
+{
+  "faceAmount": 15000,
+  "coverageType": "Level",
+  "sex": "Male",
+  "state": "TX",
+  "dobMonth": "05",
+  "dobDay": "10",
+  "dobYear": "1958",
+  "heightFeet": "5",
+  "heightInches": "9",
+  "weight": "175",
+  "tobaccoUse": "None",
+  "paymentType": "Bank Draft/EFT",
+  "conditions": ["Type 2 diabetes"],
+  "medications": ["Metformin 500mg"]
+}
+

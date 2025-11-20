@@ -24,13 +24,14 @@ async function initBrowser() {
 
   console.log("🚀 Launching persistent browser instance...");
   browserInstance = await puppeteer.launch({
-    headless: "new",
+    headless: "new", // Headless mode for production (set to false for debugging)
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-blink-features=AutomationControlled",
     ],
   });
 
@@ -69,7 +70,7 @@ async function ensureLoggedIn() {
   await initBrowser();
 
   console.log("🔐 Logging in to Insurance Toolkits...");
-  await pageInstance.goto(LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+  await pageInstance.goto(LOGIN_URL, { waitUntil: "networkidle2", timeout: 90000 });
 
   // Fill in login form
   await pageInstance.waitForSelector('input[name="email"]', { timeout: 10000 });
@@ -78,7 +79,7 @@ async function ensureLoggedIn() {
 
   // Click submit and wait for navigation
   await Promise.all([
-    pageInstance.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+    pageInstance.waitForNavigation({ waitUntil: "networkidle2", timeout: 90000 }),
     pageInstance.click('button[type="submit"]'),
   ]);
 
@@ -110,7 +111,7 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
     await ensureLoggedIn();
 
     console.log("📝 Navigating to quote page...");
-    await pageInstance.goto(QUOTE_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    await pageInstance.goto(QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
 
     // Wait for form to be ready
     await pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 10000 });
@@ -208,93 +209,111 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
 
     console.log("🚀 Submitting form...");
     
-    // Click "Get Quote" button
-    await Promise.all([
-      pageInstance.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }),
-      pageInstance.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const getQuoteButton = buttons.find(btn => btn.textContent.trim().includes('Get Quote'));
-        if (getQuoteButton) getQuoteButton.click();
-      }),
-    ]);
+    // Click "Get Quote" button (don't wait for full navigation)
+    await pageInstance.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const getQuoteButton = buttons.find(btn => btn.textContent.trim().includes('Get Quote'));
+      if (getQuoteButton) getQuoteButton.click();
+    });
 
-    // Wait for results to load - adjust this selector based on actual results page
-    console.log("⏳ Waiting for results...");
-    await pageInstance.waitForTimeout(3000); // Give time for results to render
+    // Wait for results to load (wait for quote panels to appear)
+    console.log("⏳ Waiting for quote results to appear...");
+    await pageInstance.waitForSelector('itk-included-quote-panel', { timeout: 60000 });
+    
+    // Give it a moment for all quotes to fully render
+    console.log("⏳ Waiting for all quotes to render...");
+    await pageInstance.waitForTimeout(3000);
 
     // Extract quote data from results page
     console.log("📊 Extracting quotes...");
     const quotes = await pageInstance.evaluate(() => {
       const results = [];
       
-      // Try multiple possible selectors for quote results
-      const quoteElements = document.querySelectorAll(
-        '.quote-result, .quote-card, [class*="quote"], [class*="carrier"], [class*="product"]'
-      );
-
-      // If we found specific quote elements
-      if (quoteElements.length > 0) {
-        quoteElements.forEach((element) => {
-          // Extract text content and look for patterns
-          const text = element.textContent || '';
-          
-          // Try to find provider/carrier name
-          const providerElement = element.querySelector('[class*="provider"], [class*="carrier"], [class*="company"]');
-          const provider = providerElement?.textContent?.trim() || 'Unknown';
-          
-          // Try to find product name
-          const productElement = element.querySelector('[class*="product"], [class*="plan"], [class*="name"]');
-          const productName = productElement?.textContent?.trim() || 'Unknown Plan';
-          
-          // Try to find premium amount
-          const premiumElement = element.querySelector('[class*="premium"], [class*="price"], [class*="cost"]');
-          const premiumText = premiumElement?.textContent?.trim() || '';
-          const premiumMatch = premiumText.match(/\$?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-          const monthlyPremium = premiumMatch ? parseFloat(premiumMatch[1].replace(/,/g, '')) : null;
-          
-          // Try to find face amount
-          const faceElement = element.querySelector('[class*="face"], [class*="coverage"], [class*="amount"]');
-          const faceText = faceElement?.textContent?.trim() || '';
-          const faceMatch = faceText.match(/\$?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-          const faceAmount = faceMatch ? parseFloat(faceMatch[1].replace(/,/g, '')) : null;
-
-          if (provider !== 'Unknown' || monthlyPremium !== null) {
-            results.push({
-              provider,
-              productName,
-              coverageType: null,
-              monthlyPremium,
-              faceAmount,
-              underwritingType: null,
-              issueAgeRange: null,
-            });
+      // Find all quote panels
+      const quotePanels = document.querySelectorAll('itk-included-quote-panel');
+      
+      quotePanels.forEach((panel) => {
+        try {
+          // Extract company name from image src
+          const img = panel.querySelector('img');
+          let provider = 'Unknown';
+          if (img && img.src) {
+            const src = img.src.toLowerCase();
+            // Map common image filenames to proper company names
+            if (src.includes('aflac')) provider = 'Aflac';
+            else if (src.includes('moo')) provider = 'Mutual of Omaha';
+            else if (src.includes('ahl')) provider = 'American Home Life';
+            else if (src.includes('securio')) provider = 'Securico';
+            else if (src.includes('transam')) provider = 'Transamerica';
+            else if (src.includes('security_national')) provider = 'Security National';
+            else if (src.includes('gtl')) provider = 'Guarantee Trust Life';
+            else if (src.includes('aig')) provider = 'AIG';
+            else if (src.includes('foresters')) provider = 'Foresters';
+            else if (src.includes('americo')) provider = 'Americo';
+            else if (src.includes('prosperity')) provider = 'Prosperity';
+            else {
+              // Fallback: try to extract and format from filename
+              const srcMatch = img.src.match(/\/([^\/]+)\.(png|jpg|jpeg)/i);
+              if (srcMatch) {
+                provider = srcMatch[1]
+                  .replace(/_/g, ' ')
+                  .replace(/-/g, ' ')
+                  .split(' ')
+                  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ');
+              }
+            }
           }
-        });
-      }
-
-      // If no structured results found, try to extract from table or list
-      if (results.length === 0) {
-        const rows = document.querySelectorAll('tr, .list-item, [class*="row"]');
-        rows.forEach((row) => {
-          const cells = row.querySelectorAll('td, div, span');
-          if (cells.length >= 2) {
-            const allText = Array.from(cells).map(c => c.textContent.trim()).join(' ');
-            const premiumMatch = allText.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+          
+          // Extract monthly premium - it's in the second column of top-section-desktop
+          const desktopSection = panel.querySelector('.top-section-desktop');
+          if (desktopSection) {
+            const divs = desktopSection.querySelectorAll('div');
+            let monthlyPremium = null;
+            let coverageType = null;
             
-            if (premiumMatch) {
+            // Find the premium (should be in format $XX.XX)
+            for (let div of divs) {
+              const text = div.textContent?.trim();
+              if (text && text.match(/^\$\d+\.\d{2}$/)) {
+                monthlyPremium = parseFloat(text.replace('$', ''));
+                break;
+              }
+            }
+            
+            // Find coverage type (look for common patterns)
+            for (let div of divs) {
+              const text = div.textContent?.trim();
+              if (text && (
+                text.includes('Level') || 
+                text.includes('Preferred') || 
+                text.includes('Standard') ||
+                text.includes('Graded') ||
+                text.includes('Guaranteed') ||
+                text.includes('Select') ||
+                text.includes('Express')
+              ) && text.length < 50) { // Not too long
+                coverageType = text;
+                break;
+              }
+            }
+            
+            if (monthlyPremium !== null) {
               results.push({
-                provider: cells[0]?.textContent?.trim() || 'Unknown',
-                productName: cells[1]?.textContent?.trim() || 'Unknown Plan',
-                coverageType: null,
-                monthlyPremium: parseFloat(premiumMatch[1].replace(/,/g, '')),
-                faceAmount: null,
+                provider,
+                productName: coverageType || 'Unknown Plan',
+                coverageType,
+                monthlyPremium,
+                faceAmount: null, // Not easily extractable from this view
                 underwritingType: null,
                 issueAgeRange: null,
               });
             }
           }
-        });
-      }
+        } catch (err) {
+          console.error('Error parsing quote panel:', err);
+        }
+      });
 
       return results;
     });
