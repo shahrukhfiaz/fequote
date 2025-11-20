@@ -25,6 +25,7 @@ export async function getProviderAQuote(normalizedRequest) {
     const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
     const apiKey = process.env.PROVIDER_A_API_KEY;
 
+    // Map normalized payload to Provider A shape
     const payload = {
       faceAmount: normalizedRequest.faceAmount,
       premium: normalizedRequest.premium,
@@ -81,6 +82,7 @@ export async function getProviderBQuote(normalizedRequest) {
     const url = process.env.PROVIDER_B_URL;
     const apiKey = process.env.PROVIDER_B_API_KEY;
 
+    // Map normalized payload to Provider B shape
     const payload = {
       amount: normalizedRequest.faceAmount,
       premiumTarget: normalizedRequest.premium,
@@ -171,10 +173,28 @@ export async function getAllQuotes(normalizedRequest) {
   return sortedQuotes;
 }
 
+export function getProvidersStatus() {
+  return [
+    {
+      provider: "ProviderA",
+      enabled: process.env.PROVIDER_A_ENABLED === "true",
+    },
+    {
+      provider: "ProviderB",
+      enabled: process.env.PROVIDER_B_ENABLED === "true",
+    },
+    {
+      provider: "MockCarrier",
+      enabled: true,
+    },
+  ];
+}
+
 // Optional default export if you like `import providers from "./providers.js"`
 export default {
   getProviderAQuote,
   getProviderBQuote,
   getMockProviderQuote,
   getAllQuotes,
+  getProvidersStatus,
 };
