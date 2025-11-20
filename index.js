@@ -1,18 +1,27 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import axios from "axios";
+
+import { getAllQuotes, getProvidersStatus } from "./providers.js";
 
 dotenv.config();
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Basic middleware
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Use Railway / Render / generic NODE port or fallback
-const PORT = process.env.PORT || 3000;
+const ALLOWED_COVERAGE_TYPES = [
+  "Level",
+  "Graded/Modified",
+  "Guaranteed",
+  "Limited Pay",
+  "SPWL",
+];
+
+const ALLOWED_SEX = ["Male", "Female"];
 
 /**
  * Helper: safely parse number
@@ -24,319 +33,178 @@ function toNumber(value) {
 }
 
 /**
- * Normalize incoming body from n8n / front-end form
- * into a single clean object we can pass to providers.
+ * Normalize and validate incoming body from n8n / front-end form.
+ * Returns { normalizedRequest, errors } where errors is an array of
+ * human-readable validation issues.
  */
-function normalizeQuoteRequest(body) {
-  const {
-    faceAmount,
-    premium,
-    coverageType,
-    sex,
-    state,
-    // Either age OR birthday fields
-    age,
-    dobMonth,
-    dobDay,
-    dobYear,
-    // OR nested birthday object
-    birthday,
-    // Height / weight (optional)
-    feet,
-    inches,
-    weight,
-    heightWeight,
-    // Nicotine / tobacco use
-    tobacco,
-    nicotineUse,
-    // Payment type
-    paymentType,
-    // Health conditions & meds (string or array)
-    conditions,
-    medications,
-  } = body;
+function normalizeAndValidate(body = {}) {
+  const errors = [];
 
-  // Birthday normalization
-  let normalizedDOB = null;
-  if (birthday && typeof birthday === "object") {
-    const { month, day, year } = birthday;
-    if (month && day && year) {
-      normalizedDOB = `${year}-${String(month).padStart(2, "0")}-${String(
-        day
-      ).padStart(2, "0")}`;
+  // Required enums
+  const coverageType = body.coverageType?.toString().trim();
+  if (!coverageType) {
+    errors.push("coverageType is required (e.g. Level, Guaranteed).");
+  } else if (!ALLOWED_COVERAGE_TYPES.includes(coverageType)) {
+    errors.push(
+      `coverageType must be one of: ${ALLOWED_COVERAGE_TYPES.join(", ")}.`
+    );
+  }
+
+  const sexRaw = body.sex?.toString().trim();
+  const sex = sexRaw
+    ? ALLOWED_SEX.find(
+        (option) => option.toLowerCase() === sexRaw.toLowerCase()
+      )
+    : null;
+  if (!sex) {
+    errors.push("sex is required and must be Male or Female.");
+  }
+
+  const stateRaw = body.state?.toString().trim();
+  const state = stateRaw ? stateRaw.toUpperCase() : null;
+  if (!state) {
+    errors.push("state is required (2-letter code, e.g. TX).");
+  } else if (!/^[A-Z]{2}$/.test(state)) {
+    errors.push("state must be a 2-letter state code (e.g. TX).");
+  }
+
+  // Money / amount fields
+  const faceAmount = toNumber(body.faceAmount);
+  const premium = toNumber(body.premium);
+  if (faceAmount === null && premium === null) {
+    errors.push("Provide either a faceAmount or a premium target.");
+  }
+  if (faceAmount !== null && faceAmount <= 0) {
+    errors.push("faceAmount must be greater than 0.");
+  }
+  if (premium !== null && premium <= 0) {
+    errors.push("premium must be greater than 0.");
+  }
+
+  // Age or DOB
+  const dobMonth = body.dobMonth || body.month || body?.dob?.month || null;
+  const dobDay = body.dobDay || body.day || body?.dob?.day || null;
+  const dobYear = body.dobYear || body.year || body?.dob?.year || null;
+
+  let dob = null;
+  if (dobMonth || dobDay || dobYear) {
+    if (dobMonth && dobDay && dobYear) {
+      dob = {
+        month: String(dobMonth).padStart(2, "0"),
+        day: String(dobDay).padStart(2, "0"),
+        year: String(dobYear),
+      };
+    } else {
+      errors.push(
+        "Provide all dobMonth, dobDay, and dobYear values or omit DOB entirely."
+      );
     }
-  } else if (dobMonth && dobDay && dobYear) {
-    normalizedDOB = `${dobYear}-${String(dobMonth).padStart(
-      2,
-      "0"
-    )}-${String(dobDay).padStart(2, "0")}`;
   }
 
-  // Height/Weight normalization
-  let normalizedHW = {
-    feet: null,
-    inches: null,
-    weight: null,
+  const age = body.age ? toNumber(body.age) : null;
+  if (age !== null && (age <= 0 || !Number.isInteger(age))) {
+    errors.push("age must be a whole number greater than 0.");
+  }
+
+  if (!dob && age === null) {
+    errors.push("Provide either an age or a full date of birth.");
+  }
+
+  // Height/weight
+  const heightWeight = {
+    feet: body.heightFeet || body?.heightWeight?.feet || null,
+    inches: body.heightInches || body?.heightWeight?.inches || null,
+    weight: body.weight || body?.heightWeight?.weight || null,
   };
 
-  if (heightWeight && typeof heightWeight === "object") {
-    normalizedHW = {
-      feet: heightWeight.feet || null,
-      inches: heightWeight.inches || null,
-      weight: toNumber(heightWeight.weight),
-    };
-  } else {
-    normalizedHW = {
-      feet: feet || null,
-      inches: inches || null,
-      weight: toNumber(weight),
-    };
-  }
+  // Tobacco / nicotine use
+  const tobaccoUse =
+    body.tobaccoUse || body.tobacco || body.nicotineUse || null;
 
-  // Conditions & medications normalization
-  const condList = Array.isArray(conditions)
-    ? conditions
-    : typeof conditions === "string" && conditions.trim() !== ""
-    ? conditions.split(",").map((c) => c.trim())
-    : [];
+  // Payment preference
+  const paymentType = body.paymentType || null;
 
-  const medList = Array.isArray(medications)
-    ? medications
-    : typeof medications === "string" && medications.trim() !== ""
-    ? medications.split(",").map((m) => m.trim())
-    : [];
-
-  return {
-    faceAmount: toNumber(faceAmount),
-    premium: toNumber(premium),
-    coverageType: coverageType || "Level",
-    sex: sex || "Male",
-    state: state || "TX",
-    age: age ? toNumber(age) : null,
-    dob: normalizedDOB, // YYYY-MM-DD or null
-    heightWeight: normalizedHW,
-    tobaccoUse: tobacco || nicotineUse || "None",
-    paymentType: paymentType || "Bank Draft/EFT",
-    conditions: condList,
-    medications: medList,
+  // Health conditions & medications
+  const normalizeList = (value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [];
   };
-}
 
-/**
- * Example provider integration skeletons
- * ------------------------------------------------
- * Replace the URLs, headers, and payload with your real carrier APIs.
- * Keep the function signatures the same so the aggregation still works.
- */
-
-/**
- * Provider A – Example external API
- * (You must replace URL + headers + mapping with real docs)
- */
-async function getProviderAQuote(normalizedRequest) {
-  if (process.env.PROVIDER_A_ENABLED !== "true") return null;
-
-  try {
-    const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
-    const apiKey = process.env.PROVIDER_A_API_KEY;
-
-    const payload = {
-      faceAmount: normalizedRequest.faceAmount,
-      premium: normalizedRequest.premium,
-      coverageType: normalizedRequest.coverageType,
-      sex: normalizedRequest.sex,
-      state: normalizedRequest.state,
-      age: normalizedRequest.age,
-      dob: normalizedRequest.dob,
-      heightFeet: normalizedRequest.heightWeight.feet,
-      heightInches: normalizedRequest.heightWeight.inches,
-      weight: normalizedRequest.heightWeight.weight,
-      tobaccoUse: normalizedRequest.tobaccoUse,
-      paymentType: normalizedRequest.paymentType,
-      conditions: normalizedRequest.conditions,
-      medications: normalizedRequest.medications,
-    };
-
-    const res = await axios.post(
-      url,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: apiKey ? `Bearer ${apiKey}` : undefined,
-        },
-      }
-    );
-
-    // Map their response to a common format
-    // Adjust this mapping according to real provider response
-    return {
-      provider: "ProviderA",
-      productName: res.data.productName || "Unknown Plan",
-      coverageType: res.data.coverageType || normalizedRequest.coverageType,
-      monthlyPremium: res.data.monthlyPremium,
-      faceAmount: res.data.faceAmount || normalizedRequest.faceAmount,
-      underwritingType: res.data.underwritingType || null,
-      issueAgeRange: res.data.issueAgeRange || null,
-      raw: res.data, // full raw data for debugging if needed
-    };
-  } catch (err) {
-    console.error("Error from Provider A:", err.message);
-    return {
-      provider: "ProviderA",
-      error: true,
-      errorMessage: err.message,
-    };
-  }
-}
-
-/**
- * Provider B – Another example
- */
-async function getProviderBQuote(normalizedRequest) {
-  if (process.env.PROVIDER_B_ENABLED !== "true") return null;
-
-  try {
-    const url = process.env.PROVIDER_B_URL;
-    const apiKey = process.env.PROVIDER_B_API_KEY;
-
-    const payload = {
-      amount: normalizedRequest.faceAmount,
-      premiumTarget: normalizedRequest.premium,
-      gender: normalizedRequest.sex,
-      state: normalizedRequest.state,
-      dob: normalizedRequest.dob,
-      tobacco: normalizedRequest.tobaccoUse,
-      payType: normalizedRequest.paymentType,
-      healthConditions: normalizedRequest.conditions,
-      meds: normalizedRequest.medications,
-    };
-
-    const res = await axios.post(
-      url,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-        },
-      }
-    );
-
-    return {
-      provider: "ProviderB",
-      productName: res.data.planName || "Unknown Plan",
-      coverageType: res.data.coverageCategory || normalizedRequest.coverageType,
-      monthlyPremium: res.data.monthly || res.data.premium,
-      faceAmount: res.data.amount || normalizedRequest.faceAmount,
-      underwritingType: res.data.underwritingType || null,
-      issueAgeRange: res.data.ageRange || null,
-      raw: res.data,
-    };
-  } catch (err) {
-    console.error("Error from Provider B:", err.message);
-    return {
-      provider: "ProviderB",
-      error: true,
-      errorMessage: err.message,
-    };
-  }
-}
-
-/**
- * Mock provider – always available for testing
- * This lets you test n8n + Railway without real carrier APIs yet.
- */
-async function getMockProviderQuote(normalizedRequest) {
-  // Simple fake pricing rule for demo
-  const basePremium =
-    (normalizedRequest.faceAmount || 10000) / 1000 +
-    (normalizedRequest.tobaccoUse !== "None" ? 8 : 4);
+  const conditions = normalizeList(body.conditions);
+  const medications = normalizeList(body.medications);
 
   return {
-    provider: "MockCarrier",
-    productName: `${normalizedRequest.coverageType} Final Expense Plan`,
-    coverageType: normalizedRequest.coverageType,
-    monthlyPremium: Number(basePremium.toFixed(2)),
-    faceAmount: normalizedRequest.faceAmount || 10000,
-    underwritingType:
-      normalizedRequest.coverageType === "Guaranteed"
-        ? "Guaranteed Issue"
-        : "Simplified Issue",
-    issueAgeRange: "40–80",
-    raw: {
-      note: "This is mock data for testing only. Replace with real carrier APIs.",
+    normalizedRequest: {
+      faceAmount,
+      premium,
+      coverageType: coverageType || null,
+      sex,
+      state,
+      dob,
+      age,
+      heightWeight,
+      tobaccoUse,
+      paymentType,
+      conditions,
+      medications,
     },
+    errors,
   };
 }
 
-/**
- * Health check
- */
+// Simple health check
 app.get("/", (req, res) => {
   res.json({
-    status: "ok",
-    message: "Final Expense Quotes API is running",
+    ok: true,
+    message: "Final Expense Quote API is running",
     timestamp: new Date().toISOString(),
   });
 });
 
-/**
- * Main endpoint: POST /quote
- * n8n will send all form fields here.
- */
+// Optional endpoint: list provider availability based on env flags
+app.get("/providers", (req, res) => {
+  const providers = getProvidersStatus();
+  res.json({ providers });
+});
+
+// POST /quote – main endpoint for n8n
 app.post("/quote", async (req, res) => {
   try {
-    const normalized = normalizeQuoteRequest(req.body);
+    const { normalizedRequest, errors } = normalizeAndValidate(req.body);
 
-    // Basic validation
-    if (!normalized.faceAmount && !normalized.premium) {
+    if (errors.length > 0) {
       return res.status(400).json({
-        error: "ValidationError",
-        message: "Either faceAmount or premium is required.",
+        success: false,
+        message: "Validation failed. Fix the highlighted fields and try again.",
+        errors,
       });
     }
 
-    if (!normalized.age && !normalized.dob) {
-      return res.status(400).json({
-        error: "ValidationError",
-        message: "Either age or full birthday (dob) is required.",
-      });
-    }
-
-    // Call providers in parallel
-    const results = await Promise.all([
-      getProviderAQuote(normalized),
-      getProviderBQuote(normalized),
-      getMockProviderQuote(normalized),
-    ]);
-
-    // Filter out null providers (disabled)
-    const quotes = results.filter((q) => q !== null);
-
-    // Optional: sort by monthlyPremium if available and no error
-    const sortedQuotes = quotes.sort((a, b) => {
-      if (a.error || b.error) return 0;
-      if (a.monthlyPremium == null || b.monthlyPremium == null) return 0;
-      return a.monthlyPremium - b.monthlyPremium;
-    });
+    const quotes = await getAllQuotes(normalizedRequest);
 
     res.json({
       success: true,
-      input: normalized,
-      quotes: sortedQuotes,
+      input: normalizedRequest,
+      quotes,
     });
   } catch (err) {
-    console.error("Unexpected error in /quote:", err);
+    console.error("Error in /quote:", err);
     res.status(500).json({
       success: false,
-      error: "ServerError",
-      message: err.message || "Unexpected server error",
+      message: "Internal server error while getting quotes.",
+      error: err.message,
     });
   }
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Final Expense Quotes API listening on port ${PORT}`);
+  console.log(`Final Expense Quote API listening on port ${PORT}`);
 });
+
