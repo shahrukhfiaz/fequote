@@ -275,9 +275,13 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
           
           let monthlyPremium = null;
           let annualPremium = null;
+          let accidentalDeathMonthly = null;
+          let accidentalDeathAnnual = null;
           let coverageType = null;
           let compensationInfo = null;
           let planInfo = null;
+          let socialSecurityBilling = false;
+          let notices = [];
           
           if (desktopSection) {
             const divs = desktopSection.querySelectorAll('div');
@@ -354,28 +358,104 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
             }
           }
           
-          // Extract annual premium from bottom section or mobile section
+          // Extract annual premium and accidental death premiums from bottom section
           if (bottomSection) {
-            const annualText = bottomSection.textContent || '';
-            const annualMatch = annualText.match(/Annual Rate:\s*\$?([\d,]+\.?\d*)/i);
+            const bottomText = bottomSection.textContent || '';
+            
+            // Annual premium
+            const annualMatch = bottomText.match(/Annual Rate:\s*\$?([\d,]+\.?\d*)/i);
             if (annualMatch) {
               annualPremium = parseFloat(annualMatch[1].replace(/,/g, ''));
             }
-          } else if (mobileSection) {
-            // Fallback to mobile section if desktop not available
+            
+            // Accidental Death Monthly
+            const adMonthlyMatch = bottomText.match(/Accidental Death Monthly Rate:\s*\$?([\d,]+\.?\d*)/i);
+            if (adMonthlyMatch) {
+              accidentalDeathMonthly = parseFloat(adMonthlyMatch[1].replace(/,/g, ''));
+            }
+            
+            // Accidental Death Annual
+            const adAnnualMatch = bottomText.match(/Accidental Death Annual Rate:\s*\$?([\d,]+\.?\d*)/i);
+            if (adAnnualMatch) {
+              accidentalDeathAnnual = parseFloat(adAnnualMatch[1].replace(/,/g, ''));
+            }
+          }
+          
+          // Extract from mobile section (more comprehensive)
+          if (mobileSection) {
             const spans = mobileSection.querySelectorAll('span');
             for (let i = 0; i < spans.length; i++) {
               const text = spans[i].textContent?.trim();
-              if (text === 'Annual') {
+              
+              // Annual premium
+              if (text === 'Annual' && !annualPremium) {
                 const valueSpan = spans[i + 1];
                 if (valueSpan) {
-                  const annualText = valueSpan.textContent?.trim();
-                  const match = annualText?.match(/\$?([\d,]+\.?\d*)/);
+                  const valueText = valueSpan.textContent?.trim();
+                  const match = valueText?.match(/\$?([\d,]+\.?\d*)/);
                   if (match) {
                     annualPremium = parseFloat(match[1].replace(/,/g, ''));
                   }
                 }
-                break;
+              }
+              
+              // Accidental Death Monthly
+              if (text && text.includes('+ Accidental Death (Monthly)')) {
+                const valueSpan = spans[i + 1];
+                if (valueSpan) {
+                  const valueText = valueSpan.textContent?.trim();
+                  const match = valueText?.match(/\$?([\d,]+\.?\d*)/);
+                  if (match) {
+                    accidentalDeathMonthly = parseFloat(match[1].replace(/,/g, ''));
+                  }
+                }
+              }
+              
+              // Accidental Death Annual
+              if (text && text.includes('+ Accidental Death (Annual)')) {
+                const valueSpan = spans[i + 1];
+                if (valueSpan) {
+                  const valueText = valueSpan.textContent?.trim();
+                  const match = valueText?.match(/\$?([\d,]+\.?\d*)/);
+                  if (match) {
+                    accidentalDeathAnnual = parseFloat(match[1].replace(/,/g, ''));
+                  }
+                }
+              }
+              
+              // Social Security Billing indicator
+              if (text && text.includes('social security billing')) {
+                socialSecurityBilling = true;
+              }
+              
+              // Commission/Compensation info (look for specific keywords)
+              if (text && !compensationInfo && text.length > 20 && (
+                text.includes('commission cut') || 
+                (text.includes('commission') && text.includes('%')) ||
+                (text.includes('cut is up to') && text.includes('%'))
+              )) {
+                compensationInfo = text;
+              }
+              
+              // Also check for green dollar sign followed by compensation text
+              const span = spans[i];
+              if (span.classList && 
+                  (span.classList.contains('text-green-600') || 
+                   (span.style && span.style.color && span.style.color.includes('green'))) &&
+                  span.textContent?.trim() === '$') {
+                // Next sibling should have the compensation text
+                const nextSpan = spans[i + 1];
+                if (nextSpan && nextSpan.textContent) {
+                  const nextText = nextSpan.textContent.trim();
+                  if (nextText.length > 20 && (nextText.includes('commission') || nextText.includes('%'))) {
+                    compensationInfo = nextText;
+                  }
+                }
+              }
+              
+              // Notices (rate increases, warnings, etc.)
+              if (text && (text.includes('increased rates') || text.includes('Warning') || text.includes('Note'))) {
+                notices.push(text);
               }
             }
           }
@@ -387,11 +467,15 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
               coverageType,
               monthlyPremium,
               annualPremium,
+              accidentalDeathMonthly,
+              accidentalDeathAnnual,
               faceAmount: null,
               underwritingType: null,
               issueAgeRange: null,
+              socialSecurityBilling,
               compensationInfo,
               planInfo,
+              notices: notices.length > 0 ? notices : null,
             });
           }
         } catch (err) {
