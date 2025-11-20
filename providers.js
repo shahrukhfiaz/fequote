@@ -42,6 +42,7 @@ export async function getProviderAQuote(normalizedRequest) {
   const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
   const apiKey = process.env.PROVIDER_A_API_KEY;
 
+  try {
     // Map normalized payload to Provider A shape
     const payload = {
       faceAmount: normalizedRequest.faceAmount,
@@ -98,6 +99,7 @@ export async function getProviderBQuote(normalizedRequest) {
   const url = process.env.PROVIDER_B_URL;
   const apiKey = process.env.PROVIDER_B_API_KEY;
 
+  try {
     // Map normalized payload to Provider B shape
     const payload = {
       amount: normalizedRequest.faceAmount,
