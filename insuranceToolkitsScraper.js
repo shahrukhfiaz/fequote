@@ -268,14 +268,21 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
             }
           }
           
-          // Extract monthly premium - it's in the second column of top-section-desktop
+          // Extract from desktop section
           const desktopSection = panel.querySelector('.top-section-desktop');
+          const bottomSection = panel.querySelector('.bottom-section-desktop');
+          const mobileSection = panel.querySelector('.mobile .info');
+          
+          let monthlyPremium = null;
+          let annualPremium = null;
+          let coverageType = null;
+          let compensationInfo = null;
+          let planInfo = null;
+          
           if (desktopSection) {
             const divs = desktopSection.querySelectorAll('div');
-            let monthlyPremium = null;
-            let coverageType = null;
             
-            // Find the premium (should be in format $XX.XX)
+            // Find monthly premium (format: $XX.XX)
             for (let div of divs) {
               const text = div.textContent?.trim();
               if (text && text.match(/^\$\d+\.\d{2}$/)) {
@@ -284,7 +291,7 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
               }
             }
             
-            // Find coverage type (look for common patterns)
+            // Find coverage type
             for (let div of divs) {
               const text = div.textContent?.trim();
               if (text && (
@@ -294,24 +301,98 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
                 text.includes('Graded') ||
                 text.includes('Guaranteed') ||
                 text.includes('Select') ||
-                text.includes('Express')
-              ) && text.length < 50) { // Not too long
+                text.includes('Express') ||
+                text.includes('Modified')
+              ) && text.length < 50) {
                 coverageType = text;
                 break;
               }
             }
             
-            if (monthlyPremium !== null) {
-              results.push({
-                provider,
-                productName: coverageType || 'Unknown Plan',
-                coverageType,
-                monthlyPremium,
-                faceAmount: null, // Not easily extractable from this view
-                underwritingType: null,
-                issueAgeRange: null,
-              });
+            // Extract compensation info (green $ icon)
+            // Look in the entire panel for compensation info
+            const compensationIcon = panel.querySelector('svg-icon[key="attach-money"]');
+            if (compensationIcon) {
+              // Try to find associated text - it might be in a sibling or parent's sibling
+              let current = compensationIcon.parentElement;
+              while (current && current !== panel) {
+                if (current.nextElementSibling && current.nextElementSibling.textContent) {
+                  const text = current.nextElementSibling.textContent.trim();
+                  if (text.length > 10 && (text.includes('commission') || text.includes('cut') || text.includes('%'))) {
+                    compensationInfo = text;
+                    break;
+                  }
+                }
+                current = current.parentElement;
+              }
             }
+            
+            // Extract plan info from mobile section (more reliable)
+            const mobileSectionInfo = panel.querySelector('.mobile .info');
+            if (mobileSectionInfo) {
+              const spans = mobileSectionInfo.querySelectorAll('span');
+              let foundYearInfo = false;
+              const yearDetails = [];
+              
+              for (let span of spans) {
+                const text = span.textContent?.trim();
+                // Look for year-based coverage info
+                if (text && (text.startsWith('Year') || text.startsWith('Years') || text.includes('ROP'))) {
+                  yearDetails.push(text);
+                  foundYearInfo = true;
+                } else if (foundYearInfo && text && text.includes('face amount')) {
+                  yearDetails.push(text);
+                } else if (foundYearInfo && yearDetails.length > 0 && (!text || text.length > 50)) {
+                  // Stop if we hit something that's not part of the year details
+                  break;
+                }
+              }
+              
+              if (yearDetails.length > 0) {
+                planInfo = yearDetails.join(' | ');
+              }
+            }
+          }
+          
+          // Extract annual premium from bottom section or mobile section
+          if (bottomSection) {
+            const annualText = bottomSection.textContent || '';
+            const annualMatch = annualText.match(/Annual Rate:\s*\$?([\d,]+\.?\d*)/i);
+            if (annualMatch) {
+              annualPremium = parseFloat(annualMatch[1].replace(/,/g, ''));
+            }
+          } else if (mobileSection) {
+            // Fallback to mobile section if desktop not available
+            const spans = mobileSection.querySelectorAll('span');
+            for (let i = 0; i < spans.length; i++) {
+              const text = spans[i].textContent?.trim();
+              if (text === 'Annual') {
+                const valueSpan = spans[i + 1];
+                if (valueSpan) {
+                  const annualText = valueSpan.textContent?.trim();
+                  const match = annualText?.match(/\$?([\d,]+\.?\d*)/);
+                  if (match) {
+                    annualPremium = parseFloat(match[1].replace(/,/g, ''));
+                  }
+                }
+                break;
+              }
+            }
+          }
+          
+          if (monthlyPremium !== null) {
+            results.push({
+              provider,
+              productName: coverageType || 'Unknown Plan',
+              coverageType,
+              monthlyPremium,
+              annualPremium,
+              faceAmount: null,
+              underwritingType: null,
+              issueAgeRange: null,
+              compensationInfo,
+              planInfo,
+            });
           }
         } catch (err) {
           console.error('Error parsing quote panel:', err);
