@@ -14,6 +14,24 @@ function toNumber(value) {
 }
 
 /**
+ * Validate that a provider URL exists and is syntactically valid.
+ * Returns null if OK or a human-readable error string if not.
+ */
+function validateUrl(envVarName, value) {
+  if (!value || typeof value !== "string" || value.trim() === "") {
+    return `${envVarName} is missing. Add it to your Railway environment.`;
+  }
+
+  try {
+    // Throws if invalid
+    new URL(value);
+    return null;
+  } catch (err) {
+    return `${envVarName} is not a valid URL: ${err.message}`;
+  }
+}
+
+/**
  * Provider A – Example external API
  * You MUST replace URL + headers + payload mapping with your real carrier docs.
  */
@@ -21,10 +39,15 @@ export async function getProviderAQuote(normalizedRequest) {
   // Toggle with env flag
   if (process.env.PROVIDER_A_ENABLED !== "true") return null;
 
-  try {
-    const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
-    const apiKey = process.env.PROVIDER_A_API_KEY;
+  const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
+  const apiKey = process.env.PROVIDER_A_API_KEY;
 
+  const urlError = validateUrl("PROVIDER_A_URL", url);
+  if (urlError) {
+    return { provider: "ProviderA", error: true, errorMessage: urlError };
+  }
+
+  try {
     // Map normalized payload to Provider A shape
     const payload = {
       faceAmount: normalizedRequest.faceAmount,
@@ -78,10 +101,15 @@ export async function getProviderAQuote(normalizedRequest) {
 export async function getProviderBQuote(normalizedRequest) {
   if (process.env.PROVIDER_B_ENABLED !== "true") return null;
 
-  try {
-    const url = process.env.PROVIDER_B_URL;
-    const apiKey = process.env.PROVIDER_B_API_KEY;
+  const url = process.env.PROVIDER_B_URL;
+  const apiKey = process.env.PROVIDER_B_API_KEY;
 
+  const urlError = validateUrl("PROVIDER_B_URL", url);
+  if (urlError) {
+    return { provider: "ProviderB", error: true, errorMessage: urlError };
+  }
+
+  try {
     // Map normalized payload to Provider B shape
     const payload = {
       amount: normalizedRequest.faceAmount,
@@ -184,14 +212,23 @@ export function getProvidersStatus() {
     {
       provider: "ProviderA",
       enabled: process.env.PROVIDER_A_ENABLED === "true",
+      configIssue:
+        process.env.PROVIDER_A_ENABLED === "true"
+          ? validateUrl("PROVIDER_A_URL", process.env.PROVIDER_A_URL)
+          : null,
     },
     {
       provider: "ProviderB",
       enabled: process.env.PROVIDER_B_ENABLED === "true",
+      configIssue:
+        process.env.PROVIDER_B_ENABLED === "true"
+          ? validateUrl("PROVIDER_B_URL", process.env.PROVIDER_B_URL)
+          : null,
     },
     {
       provider: "MockCarrier",
       enabled: process.env.MOCK_PROVIDER_ENABLED !== "false",
+      configIssue: null,
     },
   ];
 }
