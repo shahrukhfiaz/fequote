@@ -25,6 +25,7 @@ export async function getProviderAQuote(normalizedRequest) {
     const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
     const apiKey = process.env.PROVIDER_A_API_KEY;
 
+    // Map normalized payload to Provider A shape
     const payload = {
       faceAmount: normalizedRequest.faceAmount,
       premium: normalizedRequest.premium,
@@ -81,6 +82,7 @@ export async function getProviderBQuote(normalizedRequest) {
     const url = process.env.PROVIDER_B_URL;
     const apiKey = process.env.PROVIDER_B_API_KEY;
 
+    // Map normalized payload to Provider B shape
     const payload = {
       amount: normalizedRequest.faceAmount,
       premiumTarget: normalizedRequest.premium,
@@ -154,11 +156,17 @@ export async function getMockProviderQuote(normalizedRequest) {
  * Call all enabled providers and return a sorted list of quotes.
  */
 export async function getAllQuotes(normalizedRequest) {
-  const results = await Promise.all([
+  const providersToCall = [
     getProviderAQuote(normalizedRequest),
     getProviderBQuote(normalizedRequest),
-    getMockProviderQuote(normalizedRequest),
-  ]);
+  ];
+
+  // Allow disabling the mock provider in production via env flag
+  if (process.env.MOCK_PROVIDER_ENABLED !== "false") {
+    providersToCall.push(getMockProviderQuote(normalizedRequest));
+  }
+
+  const results = await Promise.all(providersToCall);
 
   const quotes = results.filter((q) => q !== null);
 
@@ -171,10 +179,28 @@ export async function getAllQuotes(normalizedRequest) {
   return sortedQuotes;
 }
 
+export function getProvidersStatus() {
+  return [
+    {
+      provider: "ProviderA",
+      enabled: process.env.PROVIDER_A_ENABLED === "true",
+    },
+    {
+      provider: "ProviderB",
+      enabled: process.env.PROVIDER_B_ENABLED === "true",
+    },
+    {
+      provider: "MockCarrier",
+      enabled: process.env.MOCK_PROVIDER_ENABLED !== "false",
+    },
+  ];
+}
+
 // Optional default export if you like `import providers from "./providers.js"`
 export default {
   getProviderAQuote,
   getProviderBQuote,
   getMockProviderQuote,
   getAllQuotes,
+  getProvidersStatus,
 };
