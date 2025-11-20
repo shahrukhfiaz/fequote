@@ -62,12 +62,18 @@ async function ensureLoggedIn() {
   // Check if session is still valid
   if (isLoggedIn && lastActivityTime) {
     const timeSinceLastActivity = Date.now() - lastActivityTime;
+    const hoursActive = Math.floor(timeSinceLastActivity / 1000 / 60 / 60);
+    const minutesActive = Math.floor((timeSinceLastActivity / 1000 / 60) % 60);
+    
     if (timeSinceLastActivity < SESSION_TIMEOUT) {
-      console.log("✅ Using existing session (logged in)");
+      console.log(`✅ Reusing existing session (active for ${hoursActive}h ${minutesActive}m) - NO LOGIN NEEDED`);
       return;
     }
-    console.log("⏰ Session expired, re-logging in...");
+    
+    console.log(`⏰ Session expired after ${hoursActive} hours - Logging in fresh...`);
     isLoggedIn = false;
+  } else {
+    console.log("🆕 First request - Logging in for the first time...");
   }
 
   await initBrowser();
@@ -115,6 +121,15 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
 
     console.log("📝 Navigating to quote page...");
     await pageInstance.goto(QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
+    
+    // Verify we're actually on the quote page (not redirected to login)
+    const currentUrl = pageInstance.url();
+    if (currentUrl.includes('/login')) {
+      console.log("⚠️ Redirected to login page - session was invalid, logging in again...");
+      isLoggedIn = false;
+      await ensureLoggedIn();
+      await pageInstance.goto(QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
+    }
 
     // Wait for form to be ready
     await pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 10000 });
@@ -486,8 +501,9 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
       return results;
     });
 
-    // Update last activity time
+    // Update last activity time after successful quote extraction
     lastActivityTime = Date.now();
+    console.log(`✅ Session refreshed - will remain active until ${new Date(lastActivityTime + SESSION_TIMEOUT).toLocaleString()}`);
 
     if (quotes.length > 0) {
       console.log(`✅ Found ${quotes.length} quote(s) from Insurance Toolkits`);
@@ -503,10 +519,17 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
 
   } catch (err) {
     console.error("❌ Error scraping Insurance Toolkits:", err.message);
+    console.error("Stack trace:", err.stack);
     
-    // If session error, mark as not logged in so it will retry
-    if (err.message.includes("Session") || err.message.includes("login")) {
+    // If session-related error, mark as not logged in so next request will re-login
+    if (err.message.includes("Session") || 
+        err.message.includes("login") || 
+        err.message.includes("Authentication") ||
+        err.message.includes("Unauthorized") ||
+        err.message.includes("navigation")) {
+      console.log("🔄 Session may be invalid - will re-login on next request");
       isLoggedIn = false;
+      lastActivityTime = null;
     }
 
     return {
@@ -572,7 +595,13 @@ if (process.env.INSURANCE_TOOLKITS_ENABLED === "true") {
   setInterval(() => {
     const status = getSessionStatus();
     if (status.isLoggedIn) {
-      console.log(`💚 Session active - ${status.sessionAge} minutes old`);
+      const hours = Math.floor(status.sessionAge / 60);
+      const minutes = status.sessionAge % 60;
+      const timeRemaining = Math.floor((SESSION_TIMEOUT - (Date.now() - lastActivityTime)) / 1000 / 60 / 60);
+      
+      console.log(`💚 Session active: ${hours}h ${minutes}m | Expires in: ${timeRemaining} hours | Browser: ${status.browserConnected ? 'Connected' : 'Disconnected'}`);
+    } else {
+      console.log(`⚪ No active session - will login on next request`);
     }
   }, 5 * 60 * 1000); // Log every 5 minutes
 }
