@@ -14,6 +14,24 @@ function toNumber(value) {
 }
 
 /**
+ * Validate that a provider URL exists and is syntactically valid.
+ * Returns null if OK or a human-readable error string if not.
+ */
+function validateUrl(envVarName, value) {
+  if (!value || typeof value !== "string" || value.trim() === "") {
+    return `${envVarName} is missing. Add it to your Railway environment.`;
+  }
+
+  try {
+    // Throws if invalid
+    new URL(value);
+    return null;
+  } catch (err) {
+    return `${envVarName} is not a valid URL: ${err.message}`;
+  }
+}
+
+/**
  * Provider A – Example external API
  * You MUST replace URL + headers + payload mapping with your real carrier docs.
  */
@@ -21,9 +39,8 @@ export async function getProviderAQuote(normalizedRequest) {
   // Toggle with env flag
   if (process.env.PROVIDER_A_ENABLED !== "true") return null;
 
-  try {
-    const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
-    const apiKey = process.env.PROVIDER_A_API_KEY;
+  const url = process.env.PROVIDER_A_URL; // e.g. "https://api.provider-a.com/quote"
+  const apiKey = process.env.PROVIDER_A_API_KEY;
 
     // Map normalized payload to Provider A shape
     const payload = {
@@ -78,9 +95,8 @@ export async function getProviderAQuote(normalizedRequest) {
 export async function getProviderBQuote(normalizedRequest) {
   if (process.env.PROVIDER_B_ENABLED !== "true") return null;
 
-  try {
-    const url = process.env.PROVIDER_B_URL;
-    const apiKey = process.env.PROVIDER_B_API_KEY;
+  const url = process.env.PROVIDER_B_URL;
+  const apiKey = process.env.PROVIDER_B_API_KEY;
 
     // Map normalized payload to Provider B shape
     const payload = {
@@ -156,11 +172,17 @@ export async function getMockProviderQuote(normalizedRequest) {
  * Call all enabled providers and return a sorted list of quotes.
  */
 export async function getAllQuotes(normalizedRequest) {
-  const results = await Promise.all([
+  const providersToCall = [
     getProviderAQuote(normalizedRequest),
     getProviderBQuote(normalizedRequest),
-    getMockProviderQuote(normalizedRequest),
-  ]);
+  ];
+
+  // Allow disabling the mock provider in production via env flag
+  if (process.env.MOCK_PROVIDER_ENABLED !== "false") {
+    providersToCall.push(getMockProviderQuote(normalizedRequest));
+  }
+
+  const results = await Promise.all(providersToCall);
 
   const quotes = results.filter((q) => q !== null);
 
