@@ -1,5 +1,6 @@
 // insuranceToolkitsScraper.js
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -26,16 +27,26 @@ async function initBrowser() {
   console.log("🚀 Launching persistent browser instance...");
   
   const launchOptions = {
-    headless: "new", // Headless mode for production (set to false for debugging)
-    args: [
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
+  };
+
+  // Override for local development (use local Chrome)
+  if (!process.env.RAILWAY_ENVIRONMENT && !process.env.AWS_REGION) {
+    delete launchOptions.executablePath;
+    launchOptions.headless = "new";
+    launchOptions.args = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--disable-features=IsolateOrigins,site-per-process",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  };
+    ];
+    console.log("🖥️  Using local Chrome for development");
+  } else {
+    console.log("☁️  Using @sparticuz/chromium for Railway");
+  }
 
   browserInstance = await puppeteer.launch(launchOptions);
 

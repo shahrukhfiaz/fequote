@@ -8,6 +8,13 @@
 - Railway account (free tier works)
 - Insurance Toolkits account with valid credentials
 
+### Important: Optimized for Railway
+
+This project uses `puppeteer-core` with `@sparticuz/chromium` which is optimized for Railway:
+- **Build time:** 1-3 minutes (much faster than standard Puppeteer)
+- **No Chromium download:** Uses pre-built binary
+- **Smaller deployment:** Optimized for serverless/containerized environments
+
 ### 2. Connect Repository
 
 1. Go to [Railway.app](https://railway.app)
