@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import { getAllQuotes, getProvidersStatus } from "./providers.js";
+import { getAllQuotes, getQuickQuotes, getProvidersStatus } from "./providers.js";
 
 dotenv.config();
 
@@ -173,7 +173,7 @@ app.get("/providers", (req, res) => {
   res.json({ providers });
 });
 
-// POST /quote – main endpoint for n8n
+// POST /quote – main endpoint for n8n (detailed quotes with health info)
 app.post("/quote", async (req, res) => {
   try {
     const { normalizedRequest, errors } = normalizeAndValidate(req.body);
@@ -198,6 +198,37 @@ app.post("/quote", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Internal server error while getting quotes.",
+      error: err.message,
+    });
+  }
+});
+
+// POST /quickquote – simplified quick quotes (no health conditions/medications)
+app.post("/quickquote", async (req, res) => {
+  try {
+    const { normalizedRequest, errors } = normalizeAndValidate(req.body);
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed. Fix the highlighted fields and try again.",
+        errors,
+      });
+    }
+
+    const quotes = await getQuickQuotes(normalizedRequest);
+
+    res.json({
+      success: true,
+      input: normalizedRequest,
+      quotes,
+      note: "Quick quotes - no health conditions processed. Use /quote endpoint for detailed underwriting.",
+    });
+  } catch (err) {
+    console.error("Error in /quickquote:", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while getting quick quotes.",
       error: err.message,
     });
   }

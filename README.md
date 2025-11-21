@@ -8,11 +8,22 @@ multiple quotes from different providers, including web scraping from Insurance 
 
 ## Features
 
+- ✅ **Two Quote Endpoints** - Detailed and Quick quote options
 - ✅ **Insurance Toolkits Integration** - Automated web scraping with login
+- ✅ **Persistent Session** - Login once, reuse for 24 hours (1-2 second responses)
 - ✅ **Mock Provider** - For testing without real APIs
 - ✅ **Flexible Provider System** - Easy to add more providers
 - ✅ **Input Validation** - Comprehensive validation before API calls
 - ✅ **Railway Ready** - Configured for Railway deployment
+
+## Endpoints Overview
+
+| Endpoint | Purpose | Speed | Fields | Use Case |
+|----------|---------|-------|--------|----------|
+| `/quote` | Detailed quotes with health info | 6-10s | 13+ fields | Final accurate quotes |
+| `/quickquote` | Fast price screening | 3-6s | 3 fields | Initial prospecting |
+
+See [API_ENDPOINTS.md](API_ENDPOINTS.md) for complete documentation.
 
 ## Quick Start
 
@@ -83,7 +94,11 @@ Returns the enabled/disabled status of each carrier based on environment flags.
 
 ### POST `/quote`
 
-Main endpoint for getting quotes from all enabled providers.
+Main endpoint for getting **detailed quotes** from all enabled providers (includes health conditions).
+
+### POST `/quickquote`
+
+Fast endpoint for getting **quick quotes** without health questions (faster, simpler response).
 
 **Request body:**
 

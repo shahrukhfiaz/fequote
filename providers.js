@@ -1,7 +1,7 @@
 // providers.js
 import axios from "axios";
 import dotenv from "dotenv";
-import { getInsuranceToolkitsQuote, getSessionStatus } from "./insuranceToolkitsScraper.js";
+import { getInsuranceToolkitsQuote, getQuickQuote, getSessionStatus } from "./insuranceToolkitsScraper.js";
 
 dotenv.config();
 
@@ -189,6 +189,40 @@ export async function getAllQuotes(normalizedRequest) {
   const results = await Promise.all(providersToCall);
 
   // Flatten results (Insurance Toolkits returns an array of quotes)
+  const quotes = results.reduce((acc, result) => {
+    if (result === null) return acc;
+    
+    // If it's an array (multiple quotes from one provider), spread them
+    if (Array.isArray(result)) {
+      acc.push(...result);
+    } else {
+      acc.push(result);
+    }
+    
+    return acc;
+  }, []);
+
+  const sortedQuotes = quotes.sort((a, b) => {
+    if (a.error || b.error) return 0;
+    if (a.monthlyPremium == null || b.monthlyPremium == null) return 0;
+    return a.monthlyPremium - b.monthlyPremium;
+  });
+
+  return sortedQuotes;
+}
+
+/**
+ * Get quick quotes (simplified - no health conditions/medications)
+ * Uses the Quick Quoter page for faster results
+ */
+export async function getQuickQuotes(normalizedRequest) {
+  const providersToCall = [
+    getQuickQuote(normalizedRequest),
+  ];
+
+  const results = await Promise.all(providersToCall);
+
+  // Flatten results (Quick Quote returns an array of quotes)
   const quotes = results.reduce((acc, result) => {
     if (result === null) return acc;
     

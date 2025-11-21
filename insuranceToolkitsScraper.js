@@ -6,6 +6,7 @@ dotenv.config();
 
 const LOGIN_URL = "https://insurancetoolkits.com/login";
 const QUOTE_URL = "https://app.insurancetoolkits.com/fex/quoter";
+const QUICK_QUOTE_URL = "https://app.insurancetoolkits.com/fex/quick";
 
 // Persistent session management
 let browserInstance = null;
@@ -522,6 +523,219 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
     console.error("Stack trace:", err.stack);
     
     // If session-related error, mark as not logged in so next request will re-login
+    if (err.message.includes("Session") || 
+        err.message.includes("login") || 
+        err.message.includes("Authentication") ||
+        err.message.includes("Unauthorized") ||
+        err.message.includes("navigation")) {
+      console.log("🔄 Session may be invalid - will re-login on next request");
+      isLoggedIn = false;
+      lastActivityTime = null;
+    }
+
+    return {
+      provider: "InsuranceToolkits",
+      error: true,
+      errorMessage: err.message,
+    };
+  }
+}
+
+/**
+ * Get quick quotes from Insurance Toolkits (simplified form, no health questions)
+ * Uses the /fex/quick page which is faster but less detailed
+ */
+export async function getQuickQuote(normalizedRequest) {
+  if (process.env.INSURANCE_TOOLKITS_ENABLED !== "true") {
+    return null;
+  }
+
+  try {
+    // Ensure we're logged in (reuses session if already logged in)
+    await ensureLoggedIn();
+
+    console.log("📝 Navigating to Quick Quoter page...");
+    await pageInstance.goto(QUICK_QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
+    
+    // Verify we're actually on the quick quote page
+    const currentUrl = pageInstance.url();
+    if (currentUrl.includes('/login')) {
+      console.log("⚠️ Redirected to login page - session was invalid, logging in again...");
+      isLoggedIn = false;
+      await ensureLoggedIn();
+      await pageInstance.goto(QUICK_QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
+    }
+
+    // Wait for form to be ready
+    await pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 10000 });
+
+    console.log("📋 Filling quick quote form (simplified - no health questions)...");
+
+    // Face Amount or Premium
+    if (normalizedRequest.faceAmount) {
+      await clearAndType('input[formcontrolname="faceAmount"]', String(normalizedRequest.faceAmount));
+    }
+
+    if (normalizedRequest.premium) {
+      await clearAndType('input[formcontrolname="premium"]', String(normalizedRequest.premium));
+    }
+
+    // Coverage Type
+    if (normalizedRequest.coverageType) {
+      await pageInstance.select(
+        'itk-coverage-type-select[formcontrolname="coverageType"] select',
+        normalizedRequest.coverageType
+      );
+    }
+
+    // Sex - click the appropriate button
+    if (normalizedRequest.sex) {
+      const sexButtonSelector = normalizedRequest.sex === "Male"
+        ? 'itk-sex-picker button:first-child'
+        : 'itk-sex-picker button:nth-child(2)';
+      await pageInstance.click(sexButtonSelector);
+    }
+
+    // State
+    if (normalizedRequest.state) {
+      await pageInstance.select(
+        'itk-state-select[formcontrolname="state"] select',
+        normalizedRequest.state
+      );
+    }
+
+    // Date of Birth or Age
+    if (normalizedRequest.dob) {
+      await clearAndType('input[formcontrolname="month"]', normalizedRequest.dob.month);
+      await clearAndType('input[formcontrolname="day"]', normalizedRequest.dob.day);
+      await clearAndType('input[formcontrolname="year"]', normalizedRequest.dob.year);
+    } else if (normalizedRequest.age) {
+      await clearAndType('input[formcontrolname="age"]', String(normalizedRequest.age));
+    }
+
+    // Nicotine/Tobacco Use
+    if (normalizedRequest.tobaccoUse) {
+      await pageInstance.select(
+        'itk-nicotine-select[formcontrolname="tobacco"] select',
+        normalizedRequest.tobaccoUse
+      );
+    }
+
+    // Payment Type
+    if (normalizedRequest.paymentType) {
+      await pageInstance.select(
+        'itk-payment-type-select[formcontrolname="paymentType"] select',
+        normalizedRequest.paymentType
+      );
+    }
+
+    console.log("🚀 Submitting quick quote form...");
+    
+    // Click "Get Quote" button
+    await pageInstance.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const getQuoteButton = buttons.find(btn => btn.textContent.trim().includes('Get Quote'));
+      if (getQuoteButton) getQuoteButton.click();
+    });
+
+    // Wait for results to load
+    console.log("⏳ Waiting for quick quote results...");
+    await pageInstance.waitForSelector('itk-quick-quote-panel', { timeout: 60000 });
+    await pageInstance.waitForTimeout(3000);
+
+    // Extract quote data from quick quote panels
+    console.log("📊 Extracting quick quotes...");
+    const quotes = await pageInstance.evaluate(() => {
+      const results = [];
+      
+      // Find all quick quote panels (3-column grid: image, price, coverage)
+      const quotePanels = document.querySelectorAll('itk-quick-quote-panel');
+
+      quotePanels.forEach((panel) => {
+        try {
+          // Extract company name from image src
+          const img = panel.querySelector('img');
+          let provider = 'Unknown';
+          if (img && img.src) {
+            const src = img.src.toLowerCase();
+            if (src.includes('aflac')) provider = 'Aflac';
+            else if (src.includes('moo')) provider = 'Mutual of Omaha';
+            else if (src.includes('ahl')) provider = 'American Home Life';
+            else if (src.includes('securio')) provider = 'Securico';
+            else if (src.includes('transam')) provider = 'Transamerica';
+            else if (src.includes('security_national')) provider = 'Security National';
+            else if (src.includes('gtl')) provider = 'Guarantee Trust Life';
+            else if (src.includes('aig')) provider = 'AIG';
+            else if (src.includes('foresters')) provider = 'Foresters';
+            else if (src.includes('americo')) provider = 'Americo';
+            else if (src.includes('prosperity')) provider = 'Prosperity';
+            else {
+              const srcMatch = img.src.match(/\/([^\/]+)\.(png|jpg|jpeg)/i);
+              if (srcMatch) {
+                provider = srcMatch[1]
+                  .replace(/_/g, ' ')
+                  .replace(/-/g, ' ')
+                  .split(' ')
+                  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ');
+              }
+            }
+          }
+
+          // Extract spans - quick quote panel has 3 spans in grid
+          const spans = panel.querySelectorAll('span');
+          let monthlyPremium = null;
+          let coverageType = null;
+
+          // First span (or second) contains price like $41.87
+          for (let span of spans) {
+            const text = span.textContent?.trim();
+            if (text && text.match(/^\$\d+\.\d{2}$/)) {
+              monthlyPremium = parseFloat(text.replace('$', ''));
+              break;
+            }
+          }
+
+          // Last span contains coverage type
+          if (spans.length > 0) {
+            coverageType = spans[spans.length - 1]?.textContent?.trim();
+          }
+
+          if (monthlyPremium !== null) {
+            results.push({
+              provider,
+              monthlyPremium,
+              coverageType: coverageType || 'Unknown',
+            });
+          }
+        } catch (err) {
+          console.error('Error parsing quick quote panel:', err);
+        }
+      });
+
+      return results;
+    });
+
+    // Update last activity time
+    lastActivityTime = Date.now();
+    console.log(`✅ Session refreshed - will remain active until ${new Date(lastActivityTime + SESSION_TIMEOUT).toLocaleString()}`);
+
+    if (quotes.length > 0) {
+      console.log(`✅ Found ${quotes.length} quick quote(s) from Insurance Toolkits`);
+      return quotes;
+    } else {
+      console.log("⚠️ No quick quotes found on results page");
+      return [{
+        provider: "InsuranceToolkits",
+        error: true,
+        errorMessage: "No quotes found on quick quote page",
+      }];
+    }
+
+  } catch (err) {
+    console.error("❌ Error getting quick quotes from Insurance Toolkits:", err.message);
+    
+    // If session-related error, mark as not logged in
     if (err.message.includes("Session") || 
         err.message.includes("login") || 
         err.message.includes("Authentication") ||
