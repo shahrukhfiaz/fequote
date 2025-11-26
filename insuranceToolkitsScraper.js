@@ -130,8 +130,31 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
       await pageInstance.goto(QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
     }
 
-    // Wait for form to be ready
-    await pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 10000 });
+    // Wait for form to be ready - try multiple selectors for robustness
+    console.log("⏳ Waiting for quote form to load...");
+    try {
+      await Promise.race([
+        pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 15000 }),
+        pageInstance.waitForSelector('input[formcontrolname="premium"]', { timeout: 15000 }),
+        pageInstance.waitForSelector('itk-client-info-form', { timeout: 15000 }),
+      ]);
+      console.log("✅ Form loaded successfully");
+    } catch (err) {
+      // Check what's actually on the page for debugging
+      const pageInfo = await pageInstance.evaluate(() => {
+        return {
+          url: window.location.href,
+          title: document.title,
+          hasFaceAmountInput: !!document.querySelector('input[formcontrolname="faceAmount"]'),
+          hasPremiumInput: !!document.querySelector('input[formcontrolname="premium"]'),
+          hasForm: !!document.querySelector('itk-client-info-form'),
+          bodyText: document.body.textContent.substring(0, 200)
+        };
+      });
+      
+      console.log("⚠️ Form selector not found. Page info:", JSON.stringify(pageInfo, null, 2));
+      throw new Error(`Quote form not found on page. URL: ${pageInfo.url}, Has form: ${pageInfo.hasForm}`);
+    }
 
     console.log("📋 Filling quote form...");
 
@@ -188,13 +211,12 @@ export async function getInsuranceToolkitsQuote(normalizedRequest) {
       await clearAndType('input[formcontrolname="weight"]', String(normalizedRequest.heightWeight.weight));
     }
 
-    // Nicotine/Tobacco Use
-    if (normalizedRequest.tobaccoUse) {
-      await pageInstance.select(
-        'itk-nicotine-select[formcontrolname="tobacco"] select',
-        normalizedRequest.tobaccoUse
-      );
-    }
+    // Nicotine/Tobacco Use (default to "None" if not provided - required by form)
+    const tobaccoUse = normalizedRequest.tobaccoUse || "None";
+    await pageInstance.select(
+      'itk-nicotine-select[formcontrolname="tobacco"] select',
+      tobaccoUse
+    );
 
     // Payment Type
     if (normalizedRequest.paymentType) {
@@ -564,18 +586,53 @@ export async function getQuickQuote(normalizedRequest) {
       await pageInstance.goto(QUICK_QUOTE_URL, { waitUntil: "networkidle2", timeout: 90000 });
     }
 
-    // Wait for form to be ready
-    await pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 10000 });
+    // Wait for the page to be fully loaded - try multiple selectors
+    console.log("⏳ Waiting for quick quote form to load...");
+    try {
+      // Try waiting for the form container or any form input
+      await Promise.race([
+        pageInstance.waitForSelector('input[formcontrolname="faceAmount"]', { timeout: 15000 }),
+        pageInstance.waitForSelector('input[formcontrolname="premium"]', { timeout: 15000 }),
+        pageInstance.waitForSelector('itk-client-info-form', { timeout: 15000 }),
+        pageInstance.waitForSelector('itk-fex-quick-quoter', { timeout: 15000 }),
+      ]);
+      console.log("✅ Form loaded successfully");
+    } catch (err) {
+      // Check what's actually on the page for debugging
+      const pageInfo = await pageInstance.evaluate(() => {
+        return {
+          url: window.location.href,
+          title: document.title,
+          hasFaceAmountInput: !!document.querySelector('input[formcontrolname="faceAmount"]'),
+          hasPremiumInput: !!document.querySelector('input[formcontrolname="premium"]'),
+          hasForm: !!document.querySelector('itk-client-info-form'),
+          bodyText: document.body.textContent.substring(0, 200)
+        };
+      });
+      
+      console.log("⚠️ Form selector not found. Page info:", JSON.stringify(pageInfo, null, 2));
+      throw new Error(`Quick quote form not found on page. URL: ${pageInfo.url}, Has form: ${pageInfo.hasForm}`);
+    }
 
     console.log("📋 Filling quick quote form (simplified - no health questions)...");
 
-    // Face Amount or Premium
+    // Face Amount or Premium - check if inputs exist before trying to fill
     if (normalizedRequest.faceAmount) {
-      await clearAndType('input[formcontrolname="faceAmount"]', String(normalizedRequest.faceAmount));
+      const faceAmountInput = await pageInstance.$('input[formcontrolname="faceAmount"]');
+      if (faceAmountInput) {
+        await clearAndType('input[formcontrolname="faceAmount"]', String(normalizedRequest.faceAmount));
+      } else {
+        console.log("⚠️ Face amount input not found, skipping...");
+      }
     }
 
     if (normalizedRequest.premium) {
-      await clearAndType('input[formcontrolname="premium"]', String(normalizedRequest.premium));
+      const premiumInput = await pageInstance.$('input[formcontrolname="premium"]');
+      if (premiumInput) {
+        await clearAndType('input[formcontrolname="premium"]', String(normalizedRequest.premium));
+      } else {
+        console.log("⚠️ Premium input not found, skipping...");
+      }
     }
 
     // Coverage Type
@@ -611,13 +668,12 @@ export async function getQuickQuote(normalizedRequest) {
       await clearAndType('input[formcontrolname="age"]', String(normalizedRequest.age));
     }
 
-    // Nicotine/Tobacco Use
-    if (normalizedRequest.tobaccoUse) {
-      await pageInstance.select(
-        'itk-nicotine-select[formcontrolname="tobacco"] select',
-        normalizedRequest.tobaccoUse
-      );
-    }
+    // Nicotine/Tobacco Use (default to "None" if not provided - required by form)
+    const tobaccoUse = normalizedRequest.tobaccoUse || "None";
+    await pageInstance.select(
+      'itk-nicotine-select[formcontrolname="tobacco"] select',
+      tobaccoUse
+    );
 
     // Payment Type
     if (normalizedRequest.paymentType) {
@@ -627,23 +683,49 @@ export async function getQuickQuote(normalizedRequest) {
       );
     }
 
+    // Small delay to ensure form processes all values
+    await pageInstance.waitForTimeout(500);
+
     console.log("🚀 Submitting quick quote form...");
     
-    // Click "Get Quote" button
-    await pageInstance.evaluate(() => {
+    // Click "Get Quote" button and wait for results
+    const buttonClicked = await pageInstance.evaluate(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
       const getQuoteButton = buttons.find(btn => btn.textContent.trim().includes('Get Quote'));
-      if (getQuoteButton) getQuoteButton.click();
+      if (getQuoteButton) {
+        getQuoteButton.click();
+        return true;
+      }
+      return false;
     });
 
-    // Wait for results to load
+    if (!buttonClicked) {
+      throw new Error("Could not find 'Get Quote' button on quick quote page");
+    }
+
+    // Wait for results to load (wait for quote panels to appear)
     console.log("⏳ Waiting for quick quote results...");
-    await pageInstance.waitForSelector('itk-quick-quote-panel', { timeout: 60000 });
-    await pageInstance.waitForTimeout(3000);
+    try {
+      await pageInstance.waitForSelector('itk-quick-quote-panel', { timeout: 60000 });
+      console.log("✅ Quote panels found, waiting for all quotes to render...");
+      await pageInstance.waitForTimeout(3000); // Extra time for all quotes to render
+    } catch (err) {
+      // Check if there's an error message on the page
+      const errorMessage = await pageInstance.evaluate(() => {
+        const errorEl = document.querySelector('.error, .alert, [class*="error"]');
+        return errorEl?.textContent?.trim() || null;
+      });
+      
+      if (errorMessage) {
+        throw new Error(`Form submission error: ${errorMessage}`);
+      }
+      throw new Error("Timeout waiting for quote results - form may not have submitted correctly");
+    }
 
     // Extract quote data from quick quote panels
     console.log("📊 Extracting quick quotes...");
-    const quotes = await pageInstance.evaluate(() => {
+    const inputPremium = normalizedRequest.premium; // Pass premium to evaluate function
+    const quotes = await pageInstance.evaluate((inputPremium) => {
       const results = [];
       
       // Find all quick quote panels (3-column grid: image, price, coverage)
@@ -685,21 +767,84 @@ export async function getQuickQuote(normalizedRequest) {
           let monthlyPremium = null;
           let coverageType = null;
 
-          // First span (or second) contains price like $41.87
+          // Find price - handle both formats:
+          // 1. Monthly premium: $41.87 (when faceAmount is provided)
+          // 2. Face amount: $15,000.00 (when premium is provided)
           for (let span of spans) {
             const text = span.textContent?.trim();
-            if (text && text.match(/^\$\d+\.\d{2}$/)) {
-              monthlyPremium = parseFloat(text.replace('$', ''));
-              break;
+            if (!text) continue;
+            
+            // Match price formats: $41.87, $15,000.00, etc.
+            const priceMatch = text.match(/\$([\d,]+\.?\d*)/);
+            if (priceMatch) {
+              const priceStr = priceMatch[1].replace(/,/g, '');
+              const price = parseFloat(priceStr);
+              
+              if (price > 0) {
+                // If price < 1000, it's a monthly premium
+                // If price >= 1000, it's a face amount (when premium input was used)
+                if (price < 1000) {
+                  monthlyPremium = price;
+                  break;
+                }
+                // For large numbers (face amounts), we'll handle below
+              }
+            }
+          }
+          
+          // Extract all prices and text from spans
+          const allPrices = [];
+          const allTexts = [];
+          
+          for (let span of spans) {
+            const text = span.textContent?.trim();
+            if (!text) continue;
+            
+            // Check if it's a price
+            const priceMatch = text.match(/\$([\d,]+\.?\d*)/);
+            if (priceMatch) {
+              const priceStr = priceMatch[1].replace(/,/g, '');
+              const price = parseFloat(priceStr);
+              if (price > 0) {
+                allPrices.push(price);
+                // If price < 1000, it's a monthly premium
+                if (price < 1000 && monthlyPremium === null) {
+                  monthlyPremium = price;
+                }
+              }
+            } else {
+              // Not a price, likely coverage type or other text
+              if (text.length > 2 && !text.match(/^\d+$/)) {
+                allTexts.push(text);
+              }
+            }
+          }
+          
+          // If no monthly premium found (all prices were >= 1000, meaning face amounts),
+          // use the input premium as monthlyPremium
+          if (monthlyPremium === null && inputPremium) {
+            monthlyPremium = inputPremium;
+          }
+          
+          // Coverage type is typically the first non-price text
+          if (allTexts.length > 0) {
+            coverageType = allTexts[0];
+          }
+          
+          // Fallback: try to find any span without $ as coverage type
+          if (!coverageType && spans.length > 0) {
+            for (let span of spans) {
+              const text = span.textContent?.trim();
+              if (text && !text.match(/\$/) && text.length > 2) {
+                coverageType = text;
+                break;
+              }
             }
           }
 
-          // Last span contains coverage type
-          if (spans.length > 0) {
-            coverageType = spans[spans.length - 1]?.textContent?.trim();
-          }
-
-          if (monthlyPremium !== null) {
+          // Add quote if we have monthly premium (either extracted or from input)
+          // and we have a provider name
+          if (monthlyPremium !== null && provider !== 'Unknown') {
             results.push({
               provider,
               monthlyPremium,
@@ -712,7 +857,7 @@ export async function getQuickQuote(normalizedRequest) {
       });
 
       return results;
-    });
+    }, inputPremium);
 
     // Update last activity time
     lastActivityTime = Date.now();
@@ -722,11 +867,26 @@ export async function getQuickQuote(normalizedRequest) {
       console.log(`✅ Found ${quotes.length} quick quote(s) from Insurance Toolkits`);
       return quotes;
     } else {
+      // Debug: Check what's actually on the page
+      const pageContent = await pageInstance.evaluate(() => {
+        const panels = document.querySelectorAll('itk-quick-quote-panel');
+        const spans = document.querySelectorAll('itk-quick-quote-panel span');
+        return {
+          panelCount: panels.length,
+          spanCount: spans.length,
+          spanTexts: Array.from(spans).map(s => s.textContent?.trim()).filter(Boolean),
+          pageText: document.body.textContent.substring(0, 500)
+        };
+      });
+      
       console.log("⚠️ No quick quotes found on results page");
+      console.log("🔍 Debug info:", JSON.stringify(pageContent, null, 2));
+      
       return [{
         provider: "InsuranceToolkits",
         error: true,
-        errorMessage: "No quotes found on quick quote page",
+        errorMessage: `No quotes found on quick quote page. Found ${pageContent.panelCount} panels, ${pageContent.spanCount} spans.`,
+        debug: pageContent
       }];
     }
 
