@@ -780,53 +780,42 @@ export async function getQuickQuote(normalizedRequest) {
             if (priceMatch) {
               const priceStr = priceMatch[1].replace(/,/g, '');
               const price = parseFloat(priceStr);
+              
               if (price > 0) {
                 // If price < 1000, it's a monthly premium (when faceAmount was provided)
                 // If price >= 1000, it's a face amount (when premium was provided)
                 if (price < 1000) {
                   monthlyPremium = price;
                 } else {
-                  // Large number = face amount (when premium input was used)
                   faceAmount = price;
                 }
               }
             } else {
               // Not a price, likely coverage type
-              if (text.length > 2 && !text.match(/^\d+$/) && !text.match(/\$/)) {
+              if (text.length > 2 && !text.match(/^\d+$/) && !coverageType) {
                 coverageType = text;
               }
             }
           }
           
-          // Fallback: try to find coverage type if not found yet
-          if (!coverageType && spans.length > 0) {
-            for (let span of spans) {
-              const text = span.textContent?.trim();
-              if (text && !text.match(/\$/) && text.length > 2 && !text.match(/^\d+$/)) {
-                coverageType = text;
-                break;
-              }
-            }
-          }
-
-          // Add quote if we have either monthlyPremium or faceAmount
-          // When premium is provided: return faceAmount (and include input premium)
-          // When faceAmount is provided: return monthlyPremium
+          // When premium is provided (inputPremium exists), the page shows face amounts
+          // When faceAmount is provided, the page shows monthly premiums
+          // Build the quote object accordingly
           if (provider !== 'Unknown' && (monthlyPremium !== null || faceAmount !== null)) {
             const quote = {
               provider,
               coverageType: coverageType || 'Unknown',
             };
             
-            // If we have faceAmount (premium was provided), return that
+            // If we have faceAmount (premium was provided as input)
             if (faceAmount !== null) {
               quote.faceAmount = faceAmount;
               // Also include the input premium for reference
               if (inputPremium) {
                 quote.monthlyPremium = inputPremium;
               }
-            } else {
-              // If we have monthlyPremium (faceAmount was provided), return that
+            } else if (monthlyPremium !== null) {
+              // If we have monthlyPremium (faceAmount was provided as input)
               quote.monthlyPremium = monthlyPremium;
             }
             
@@ -959,4 +948,3 @@ if (process.env.INSURANCE_TOOLKITS_ENABLED === "true") {
   }, 5 * 60 * 1000); // Log every 5 minutes
 }
 
-}
