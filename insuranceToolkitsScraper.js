@@ -762,40 +762,15 @@ export async function getQuickQuote(normalizedRequest) {
             }
           }
 
-          // Extract spans - quick quote panel has 3 spans in grid
+          // Extract spans - quick quote panel structure:
+          // When premium is provided: shows face amounts (e.g., "$16,852.00")
+          // When faceAmount is provided: shows monthly premiums (e.g., "$41.87")
           const spans = panel.querySelectorAll('span');
           let monthlyPremium = null;
+          let faceAmount = null;
           let coverageType = null;
 
-          // Find price - handle both formats:
-          // 1. Monthly premium: $41.87 (when faceAmount is provided)
-          // 2. Face amount: $15,000.00 (when premium is provided)
-          for (let span of spans) {
-            const text = span.textContent?.trim();
-            if (!text) continue;
-            
-            // Match price formats: $41.87, $15,000.00, etc.
-            const priceMatch = text.match(/\$([\d,]+\.?\d*)/);
-            if (priceMatch) {
-              const priceStr = priceMatch[1].replace(/,/g, '');
-              const price = parseFloat(priceStr);
-              
-              if (price > 0) {
-                // If price < 1000, it's a monthly premium
-                // If price >= 1000, it's a face amount (when premium input was used)
-                if (price < 1000) {
-                  monthlyPremium = price;
-                  break;
-                }
-                // For large numbers (face amounts), we'll handle below
-              }
-            }
-          }
-          
           // Extract all prices and text from spans
-          const allPrices = [];
-          const allTexts = [];
-          
           for (let span of spans) {
             const text = span.textContent?.trim();
             if (!text) continue;
@@ -806,50 +781,56 @@ export async function getQuickQuote(normalizedRequest) {
               const priceStr = priceMatch[1].replace(/,/g, '');
               const price = parseFloat(priceStr);
               if (price > 0) {
-                allPrices.push(price);
-                // If price < 1000, it's a monthly premium
-                if (price < 1000 && monthlyPremium === null) {
+                // If price < 1000, it's a monthly premium (when faceAmount was provided)
+                // If price >= 1000, it's a face amount (when premium was provided)
+                if (price < 1000) {
                   monthlyPremium = price;
+                } else {
+                  // Large number = face amount (when premium input was used)
+                  faceAmount = price;
                 }
               }
             } else {
-              // Not a price, likely coverage type or other text
-              if (text.length > 2 && !text.match(/^\d+$/)) {
-                allTexts.push(text);
+              // Not a price, likely coverage type
+              if (text.length > 2 && !text.match(/^\d+$/) && !text.match(/\$/)) {
+                coverageType = text;
               }
             }
           }
           
-          // If no monthly premium found (all prices were >= 1000, meaning face amounts),
-          // use the input premium as monthlyPremium
-          if (monthlyPremium === null && inputPremium) {
-            monthlyPremium = inputPremium;
-          }
-          
-          // Coverage type is typically the first non-price text
-          if (allTexts.length > 0) {
-            coverageType = allTexts[0];
-          }
-          
-          // Fallback: try to find any span without $ as coverage type
+          // Fallback: try to find coverage type if not found yet
           if (!coverageType && spans.length > 0) {
             for (let span of spans) {
               const text = span.textContent?.trim();
-              if (text && !text.match(/\$/) && text.length > 2) {
+              if (text && !text.match(/\$/) && text.length > 2 && !text.match(/^\d+$/)) {
                 coverageType = text;
                 break;
               }
             }
           }
 
-          // Add quote if we have monthly premium (either extracted or from input)
-          // and we have a provider name
-          if (monthlyPremium !== null && provider !== 'Unknown') {
-            results.push({
+          // Add quote if we have either monthlyPremium or faceAmount
+          // When premium is provided: return faceAmount (and include input premium)
+          // When faceAmount is provided: return monthlyPremium
+          if (provider !== 'Unknown' && (monthlyPremium !== null || faceAmount !== null)) {
+            const quote = {
               provider,
-              monthlyPremium,
               coverageType: coverageType || 'Unknown',
-            });
+            };
+            
+            // If we have faceAmount (premium was provided), return that
+            if (faceAmount !== null) {
+              quote.faceAmount = faceAmount;
+              // Also include the input premium for reference
+              if (inputPremium) {
+                quote.monthlyPremium = inputPremium;
+              }
+            } else {
+              // If we have monthlyPremium (faceAmount was provided), return that
+              quote.monthlyPremium = monthlyPremium;
+            }
+            
+            results.push(quote);
           }
         } catch (err) {
           console.error('Error parsing quick quote panel:', err);
@@ -976,4 +957,6 @@ if (process.env.INSURANCE_TOOLKITS_ENABLED === "true") {
       console.log(`⚪ No active session - will login on next request`);
     }
   }, 5 * 60 * 1000); // Log every 5 minutes
+}
+
 }
